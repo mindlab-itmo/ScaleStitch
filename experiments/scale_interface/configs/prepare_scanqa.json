@@ -1,0 +1,10 @@
+{
+  "dataset": "scanqa",
+  "split": "val",
+  "seed": 20260911,
+  "questions": "assets/ScanQA_v1.0_val.json",
+  "scene_object_ids": "assets/scene_object_ids.json",
+  "cohort": {
+    "mode": "all_available"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "dataset": "sqa3d",
+  "split": "test",
+  "seed": 20260911,
+  "questions": "assets/sqa3d_test_questions.json",
+  "scene_object_ids": "assets/scene_object_ids.json",
+  "cohort": {
+    "mode": "all_available"
+  },
+  "annotations": "assets/sqa3d_test_annotations.json"
+}

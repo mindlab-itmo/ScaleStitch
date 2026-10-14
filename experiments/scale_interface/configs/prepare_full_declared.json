@@ -1,0 +1,9 @@
+{
+  "base_config": "experiments/scale_interface/configs/object_only.json",
+  "source_attributes": "assets/source_gt_attributes.pt",
+  "image_features": "assets/scannet_gt_videofeats.pt",
+  "raw_relations": "assets/scannet_gnn_val_feats.pt",
+  "allowed_scenes": "assets/allowed_scenes.json",
+  "missing_channel_policy": "zero_projected_declared",
+  "missing_channels": "assets/missing_channels.json"
+}

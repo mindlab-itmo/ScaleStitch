@@ -1,0 +1,29 @@
+{
+  "run": "runs/full_01",
+  "references": "assets/prepared_qa/scoring/references.json",
+  "cohort": "runs/full_01/cohort.json",
+  "conditions": [
+    "full_absent_true_cm_forward",
+    "full_lexical_true_cm_forward",
+    "full_lexical_constant_cm_forward",
+    "full_lexical_swapped_cm_forward"
+  ],
+  "contrasts": {
+    "true_vs_absent": [
+      "full_lexical_true_cm_forward",
+      "full_absent_true_cm_forward"
+    ],
+    "true_vs_constant": [
+      "full_lexical_true_cm_forward",
+      "full_lexical_constant_cm_forward"
+    ],
+    "true_vs_swapped": [
+      "full_lexical_true_cm_forward",
+      "full_lexical_swapped_cm_forward"
+    ]
+  },
+  "seed": 20260911,
+  "family_size": 3,
+  "replicates": 10000,
+  "export_scored_rows": true
+}

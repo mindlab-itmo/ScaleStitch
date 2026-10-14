@@ -1,0 +1,94 @@
+{
+  "seed": 20260911,
+  "device": "cuda",
+  "host": {
+    "host_checkpoint": "assets/host.pt",
+    "deployment": "assets/deployment.pt",
+    "lora": {
+      "lora_r": 16,
+      "lora_alpha": 16,
+      "lora_dropout": 0.05,
+      "lora_target_modules": [
+        "q_proj",
+        "v_proj",
+        "k_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj"
+      ]
+    },
+    "model": {
+      "llama_model_path": "assets/Meta-Llama-3-8B-Instruct",
+      "system": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.",
+      "instruction": "The conversation centers around an indoor scene. Object information: [<REPLACE>].",
+      "host_mode": "full",
+      "source_feature_dim": 1280,
+      "input_dim": 1024,
+      "object_feature_intervention": "full",
+      "img_input_dim": 1024,
+      "attr_dim": 512,
+      "scene_dim": 256,
+      "pos_dim": 128,
+      "encoder_num_layers": 3,
+      "max_obj_num": 150,
+      "max_knn": 5,
+      "knn": 2,
+      "max_txt_len": 64,
+      "end_sym": "</s>",
+      "role": [
+        "USER",
+        "ASSISTANT"
+      ],
+      "train_emb": true,
+      "train_img_proj": true,
+      "use_lora": true,
+      "add_img_token": true,
+      "add_pos_emb": false,
+      "add_scene_token": false,
+      "bbox_embed": false,
+      "bidirection": false,
+      "feat_fusion": false,
+      "fuse_with_id": false,
+      "gt_pretrain": true,
+      "low_resource": false,
+      "no_obj": false,
+      "use_location_token": false,
+      "use_objid": true,
+      "nms": true,
+      "nn_distance": true
+    },
+    "feature_mode": "deployment"
+  },
+  "data": {
+    "features": "assets/features.pt",
+    "radii": "assets/features.radius.pt",
+    "attributes": "assets/attributes.pt",
+    "rows": "assets/full_inputs/questions.json",
+    "point_cloud_type": "gt",
+    "feature_dim": 1280,
+    "images": "assets/full_inputs/images.pt",
+    "relations": "assets/full_inputs/relations.pt",
+    "full_manifest": "assets/full_inputs/manifest.json"
+  },
+  "run": {
+    "conditions": [
+      {
+        "representation": "absent"
+      },
+      {
+        "representation": "lexical"
+      },
+      {
+        "representation": "lexical",
+        "mode": "constant"
+      },
+      {
+        "representation": "lexical",
+        "mode": "swapped"
+      }
+    ],
+    "max_new_tokens": 32,
+    "maximum_length": 2502
+  }
+}

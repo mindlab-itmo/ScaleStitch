@@ -1,0 +1,104 @@
+{
+  "seed": 20260911,
+  "replicates": 10000,
+  "banks": {
+    "original": {
+      "path": "runs/original_metrics/scored_rows.json",
+      "conditions": {
+        "A": "full_absent_true_cm_forward",
+        "T": "full_lexical_true_cm_forward",
+        "S": "full_lexical_swapped_cm_forward"
+      }
+    },
+    "added": {
+      "path": "runs/added_instruction_metrics/scored_rows.json",
+      "conditions": {
+        "A": "full_absent_true_cm_forward",
+        "T": "full_lexical_true_cm_forward"
+      }
+    },
+    "reassigned": {
+      "path": "runs/added_reassigned_metrics/scored_rows.json",
+      "conditions": {
+        "S": "full_lexical_swapped_cm_forward"
+      }
+    },
+    "height": {
+      "path": "runs/original_height_metrics/scored_rows.json",
+      "conditions": {
+        "A": "full_absent_true_cm_forward",
+        "T": "full_lexical_true_cm_forward_height",
+        "S": "full_lexical_swapped_cm_forward_height",
+        "R": "full_lexical_true_cm_forward"
+      }
+    },
+    "radius_height": {
+      "path": "runs/radius_question_height_packet_metrics/scored_rows.json",
+      "conditions": {
+        "T": "full_lexical_true_cm_forward_height"
+      }
+    },
+    "zero": {
+      "path": "runs/zero_radius_metrics/scored_rows.json",
+      "conditions": {
+        "A": "zero_object_slots_absent_true_cm_forward",
+        "T": "zero_object_slots_lexical_true_cm_forward",
+        "S": "zero_object_slots_lexical_swapped_cm_forward"
+      }
+    },
+    "permute": {
+      "path": "runs/permute_radius_metrics/scored_rows.json",
+      "conditions": {
+        "A": "permute_object_slots_absent_true_cm_forward",
+        "T": "permute_object_slots_lexical_true_cm_forward",
+        "S": "permute_object_slots_lexical_swapped_cm_forward"
+      }
+    }
+  },
+  "analyses": {
+    "instruction": {
+      "kind": "instruction",
+      "new": "added",
+      "old": "original",
+      "interaction_family_size": 8
+    },
+    "assignment": {
+      "kind": "instruction_reassigned",
+      "at": "added",
+      "continuation": "reassigned",
+      "old": "original"
+    },
+    "property": {
+      "kind": "property",
+      "radius": "original",
+      "height": "height",
+      "radius_height": "radius_height",
+      "metadata": {
+        "radius": "inputs/radius_pair_metadata.json",
+        "height": "inputs/height_pair_metadata.json"
+      },
+      "expected_counts": {
+        "radius": 4161,
+        "height": 4157,
+        "shared": 4131,
+        "scenes": 70,
+        "discordant": 1228
+      }
+    },
+    "zero_features": {
+      "kind": "feature",
+      "new": "zero",
+      "old": "original"
+    },
+    "permuted_features": {
+      "kind": "feature",
+      "new": "permute",
+      "old": "original"
+    },
+    "zero_minus_permute": {
+      "kind": "between_features",
+      "zero": "zero",
+      "permute": "permute"
+    }
+  }
+}
