@@ -14,6 +14,10 @@ This version adds complete controlled question sets, declared missing-channel ma
 | `__main__.py`, `host.py`, `natural_qa.py` | Load the frozen host, check shared input coverage, and generate answers. |
 | `score_natural_qa.py`, `prediction_scoring.py` | Score completed runs and export per-question diagnostic outcomes. |
 | `diagnostic_metrics.py`, `matched_question_metrics.py` | Paired effects, interactions, and scene-family bootstrap intervals. |
+| `packet_scope.py`, `candidate_decision.py` | Candidate-only packets and restricted two-ID decisions. |
+| `text_only_baseline.py` | Shared plain-label text inputs and strict output scoring. |
+| `host_normalization.py` | Published host answer normalization for revised natural-question scoring. |
+| `packet_lora.py` | LoRA-only continuation with native answers and resumable optimizer checkpoints. |
 | `configs/` | Editable examples for preparation, inference, and scoring. |
 | `PROTOCOL.md` | Input schemas, experimental conditions, and scoring definitions. |
 
@@ -34,6 +38,8 @@ python -m experiments.scale_interface.score_natural_qa --config experiments/scal
 ```
 
 Use `prepare_scanqa.json` for ScanQA. The full-test SQA3D example keeps every question with available scene inputs and writes missing-scene exclusions. To reproduce the added natural-answer instruction, set `instruction` to `natural` in the preparation config.
+
+Set `scoring` to `"host_normalized_em1"` in the scoring config for host-normalized exact match. The default `"natural_qa"` reproduces the original protocol score. Recompute effects and intervals under the selected score.
 
 Controlled questions:
 
@@ -61,3 +67,9 @@ python -m unittest discover -s experiments/scale_interface/tests
 For declared missing images/relations, use `prepare_full_declared.json` with the source-row mask described in [PROTOCOL.md](PROTOCOL.md#missing-channels). Without a declaration, missing required channels are rejected during preparation or inference preflight.
 
 Measurement conditions are absent, correct, constant, reassigned, and equal-length masked. Image/graph ablations use `run.channel_intervention`; object ablations use `object_intervention` in each condition. These controls preserve the trained host. The `full_` prefix in condition names describes object features; `host.model.host_mode` selects the object-only or full multimodal host.
+
+Set `run.repetition_penalty` to `1.0` for neutral repetition handling, or pass `--repetition-penalty 1.0` to `generate-scene`. The default remains `3.0`.
+
+For direct-ID comparisons, add `"packet_scope": "queried_pair"` to a packet condition. The original question must name exactly two source IDs. The packet keeps their records from the full-scene intervention, including its original reassignment donors. Reuse the unchanged absent condition.
+
+Set `run.decision_mode` to `"candidate_logits"` with repetition penalty `1.0` to select between the two candidate ID tokens. This uses the same scene prefix and reports raw next-token logits and pair probability before generation processors. `"free"` retains ordinary answer generation.

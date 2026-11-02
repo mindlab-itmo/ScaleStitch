@@ -25,5 +25,6 @@
   "seed": 20260911,
   "family_size": 3,
   "replicates": 10000,
+  "scoring": "natural_qa",
   "export_scored_rows": true
 }

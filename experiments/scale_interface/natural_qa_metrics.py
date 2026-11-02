@@ -17,6 +17,8 @@ from numbers import Integral, Real
 import random
 import re
 
+from . import host_normalization
+
 
 METRICS = ("raw_exact", "lower_whitespace_exact", "protocol_normalized_exact", "punctuation_only_exact")
 
@@ -31,6 +33,8 @@ def normalize_answer(text, *, metric="protocol_normalized_exact"):
     """
     if not isinstance(text, str):
         raise ValueError("answer text must be a string")
+    if metric == host_normalization.METRIC:
+        return host_normalization.clean_answer(text)
     if metric == "raw_exact":
         return text
     normalized = " ".join(text.lower().split())
@@ -77,7 +81,7 @@ def _rows(values, name):
         yield row
 
 
-def _references(rows):
+def _references(rows, *, metric_names=METRICS):
     result = {}
     for row in _rows(rows, "references"):
         qid, scene = _qid(row["question_id"]), _scene(row["scene_id"])
@@ -88,8 +92,10 @@ def _references(rows):
                 or any(not isinstance(answer, str) or not answer.strip() for answer in answers)):
             raise ValueError("reference answers must be a nonempty list of nonblank strings")
         normalized = {metric: {normalize_answer(answer, metric=metric) for answer in answers}
-                      for metric in METRICS}
-        if any(not (values - {""}) for values in normalized.values()):
+                      for metric in metric_names}
+        # Empty host-normalized reference sets remain errors on the fixed
+        # denominator. Preserve the legacy reference validation unchanged.
+        if any(not (normalized[metric] - {""}) for metric in METRICS):
             raise ValueError(f"reference answers normalize to empty text: {qid}")
         result[qid] = {"scene_id": scene, "answers": normalized}
     if not result:
@@ -110,7 +116,7 @@ def _cohort(qids, references):
     return sorted(selected)
 
 
-def _predictions(rows, references, selected, conditions, allow_outside_cohort):
+def _predictions(rows, references, selected, conditions, allow_outside_cohort, *, metric_names=METRICS):
     selected = set(selected)
     result = {condition: {} for condition in conditions}
     ignored, seen = Counter(), set()
@@ -135,7 +141,7 @@ def _predictions(rows, references, selected, conditions, allow_outside_cohort):
                 raise ValueError(f"prediction outside selected cohort: {qid}")
             ignored[condition] += 1
             continue
-        texts = {metric: normalize_answer(prediction, metric=metric) for metric in METRICS}
+        texts = {metric: normalize_answer(prediction, metric=metric) for metric in metric_names}
         hits = {metric: int(not invalid and bool(text.strip())
                             and text in references[qid]["answers"][metric])
                 for metric, text in texts.items()}
@@ -199,6 +205,7 @@ def _contrast_specs(contrasts, interactions, conditions, family_size):
 def evaluate_natural_qa(
     predictions, references, *, conditions, contrasts, cohort_qids=None,
     replicates=10000, seed=20260909, family_size=3, exploratory_linear_contrasts=None,
+    primary_metric="protocol_normalized_exact",
 ):
     """Score complete paired conditions on an explicit, externally fixed cohort.
 
@@ -214,7 +221,15 @@ def evaluate_natural_qa(
     and predictions outside an explicit cohort are validated, then counted as
     ignored. They never choose the cohort. Empty/invalid-object-ID predictions
     count as errors, never exclusions. No per-question McNemar test is used.
+
+    The optional pinned host-normalized EM1 primary metric adds its separately
+    named endpoint, preserves legacy metrics, and adjusts intervals for the
+    selected primary only. The default legacy protocol is unchanged.
     """
+    if primary_metric not in ("protocol_normalized_exact", host_normalization.METRIC):
+        raise ValueError("unknown primary exact-match metric")
+    metric_names = METRICS + ((host_normalization.METRIC,)
+                              if primary_metric == host_normalization.METRIC else ())
     replicates = _positive_int(replicates, "replicates")
     if isinstance(seed, bool) or not isinstance(seed, Integral):
         raise ValueError("seed must be an integer")
@@ -223,9 +238,10 @@ def evaluate_natural_qa(
     conditions = tuple(_condition(value) for value in conditions)
     if not conditions or len(set(conditions)) != len(conditions):
         raise ValueError("conditions must be nonempty and unique")
-    refs = _references(references)
+    refs = _references(references, metric_names=metric_names)
     selected = _cohort(cohort_qids, refs)
-    scored, ignored = _predictions(predictions, refs, selected, conditions, cohort_qids is not None)
+    scored, ignored = _predictions(predictions, refs, selected, conditions, cohort_qids is not None,
+                                  metric_names=metric_names)
     specs = _contrast_specs(contrasts, exploratory_linear_contrasts, conditions, family_size)
     by_scene = defaultdict(list)
     for qid in selected:
@@ -247,14 +263,14 @@ def evaluate_natural_qa(
                 "accuracy": sum(records[qid]["hits"][metric] for qid in selected) / len(selected),
                 "scene_equal_accuracy": sum(sum(records[qid]["hits"][metric] for qid in qids)
                                             / len(qids) for qids in by_scene.values()) / len(by_scene),
-            } for metric in METRICS},
+            } for metric in metric_names},
         }
 
     # Preaggregate counts once; bootstrap iterations never revisit question text.
     prepared = {}
     for name, spec in specs.items():
         prepared[name] = {}
-        for metric in METRICS:
+        for metric in metric_names:
             scene_delta = {
                 scene: sum(sum(weight * scored[condition][qid]["hits"][metric]
                                for condition, weight in spec["weights"].items()) for qid in qids)
@@ -285,11 +301,11 @@ def evaluate_natural_qa(
             treatment, control = spec["pair"]
             result["answer_changes"] = {
                 metric: sum(scored[treatment][qid]["texts"][metric] != scored[control][qid]["texts"][metric]
-                            for qid in selected) for metric in METRICS}
+                            for qid in selected) for metric in metric_names}
         for metric, values in prepared[name].items():
             samples, scene_samples = values["samples"], values["scene_samples"]
             confidence = (1 - .05 / spec["family_size"]
-                          if spec["family_size"] is not None and metric == "protocol_normalized_exact" else None)
+                          if spec["family_size"] is not None and metric == primary_metric else None)
             result["metrics"][metric] = {
                 "delta": sum(values["counts"]) / len(selected),
                 "ci95": _interval(samples, .95) if samples else None,
@@ -309,9 +325,10 @@ def evaluate_natural_qa(
                 result["metrics"][metric].update(wins=wins, losses=losses, ties=len(selected) - wins - losses,
                                                   both_conditions_zero_accuracy=both_zero)
         (comparisons if spec["pair"] else exploratory)[name] = result
-    return {
-        "accuracy_units": "fraction", "primary_metric": "protocol_normalized_exact",
-        "normalization": "lowercase; collapse whitespace; strip trailing .!?; remove one leading a/an/the",
+    result = {
+        "accuracy_units": "fraction", "primary_metric": primary_metric,
+        "normalization": (host_normalization.NORMALIZATION if primary_metric == host_normalization.METRIC
+                          else "lowercase; collapse whitespace; strip trailing .!?; remove one leading a/an/the"),
         "cohort": {"questions": len(selected), "scenes": len(by_scene), "scene_families": len(families),
                    "explicit_question_ids": cohort_qids is not None,
                    "ignored_reference_questions": len(refs) - len(selected),
@@ -325,3 +342,6 @@ def evaluate_natural_qa(
         "interpretation": "Intervals are approximate cluster-bootstrap intervals. Null, floor, or degenerate "
                           "results do not establish equivalence or lack of representation use.",
     }
+    if primary_metric == host_normalization.METRIC:
+        result["metric_provenance"] = host_normalization.provenance()
+    return result

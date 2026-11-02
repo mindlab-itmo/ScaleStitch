@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from . import natural_qa_metrics, prediction_scoring
+from . import host_normalization, natural_qa_metrics, prediction_scoring
 from .prepare_questions import _finish, _ids, _keys, _path, _read, _write
 
 
@@ -19,11 +19,11 @@ def score(config_path, output):
            "pair_metadata", "export_scored_rows"})
     scoring = config.get("scoring", "natural_qa")
     export = config.get("export_scored_rows", False)
-    if scoring not in ("natural_qa", "native_id") or type(export) is not bool:
+    if scoring not in ("natural_qa", "native_id", "host_normalized_em1") or type(export) is not bool:
         raise ValueError("invalid scoring mode or export_scored_rows flag")
     if (scoring == "native_id") != ("questions" in config and "pair_metadata" in config):
         raise ValueError("native_id scoring requires questions and pair_metadata")
-    if scoring == "natural_qa" and ({"questions", "pair_metadata"} & config.keys()):
+    if scoring != "native_id" and ({"questions", "pair_metadata"} & config.keys()):
         raise ValueError("controlled metadata requires native_id scoring")
     base = Path.cwd()
     run = _path(base, config["run"])
@@ -117,12 +117,13 @@ def score(config_path, output):
         evaluated, references, cohort_qids=cohort, conditions=conditions,
         contrasts=config["contrasts"], seed=config["seed"], family_size=config["family_size"],
         replicates=config.get("replicates", 10000),
-        exploratory_linear_contrasts=config.get("exploratory_linear_contrasts"))
+        exploratory_linear_contrasts=config.get("exploratory_linear_contrasts"),
+        primary_metric=host_normalization.METRIC if scoring == "host_normalized_em1" else "protocol_normalized_exact")
     output.mkdir(parents=True, exist_ok=False)
     _write(output / "metrics.json", metrics)
     if export:
         _write(output / "scored_rows.json", outcomes)
-    return _finish(output, {
+    manifest = {
         "status": "complete", "command": "score_natural_qa", "schema_version": 1,
         "fixed_cohort_questions": len(cohort), "complete_run_questions": len(run_qids),
         "completed_predictions": len(predictions), "conditions": conditions,
@@ -130,9 +131,16 @@ def score(config_path, output):
         "metric_scope": "experiment exact-match protocol, not the official ScanQA evaluator",
         "scoring": scoring, "scored_rows": "scored_rows.json" if export else None,
         "metrics": "metrics.json",
-    }, artifacts, [Path(__file__), Path(__file__).with_name("prepare_questions.py"),
-                   Path(natural_qa_metrics.__file__), Path(prediction_scoring.__file__),
-                   Path(__file__).with_name("scanqa_protocol.py")])
+    }
+    code_files = [Path(__file__), Path(__file__).with_name("prepare_questions.py"),
+                  Path(natural_qa_metrics.__file__), Path(prediction_scoring.__file__),
+                  Path(__file__).with_name("scanqa_protocol.py")]
+    if scoring == "host_normalized_em1":
+        manifest.update(metric_scope=host_normalization.provenance()["scope"],
+                        primary_metric=host_normalization.METRIC,
+                        metric_provenance=host_normalization.provenance())
+        code_files.extend([Path(host_normalization.__file__), Path(__file__).with_name("LICENSE.host")])
+    return _finish(output, manifest, artifacts, code_files)
 
 
 def main(argv=None):

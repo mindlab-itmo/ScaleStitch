@@ -57,7 +57,7 @@ def _generate_scene_controlled(core, data, config, output, options, intervention
         if source["input_id"] != digest.hexdigest():
             raise ValueError("height declaration differs from actual attributes")
         measurement_options["measurement_source"] = source
-    allowed_options = {"max_new_tokens", "maximum_length", "placement", "constant_cm", "repetition_penalty"}
+    allowed_options = {"max_new_tokens", "maximum_length", "placement", "constant_cm", "repetition_penalty", "decision_mode"}
     if set(options) - allowed_options:
         raise ValueError(f"unknown generate-scene options: {sorted(set(options) - allowed_options)}")
     options.setdefault("max_new_tokens", 32)

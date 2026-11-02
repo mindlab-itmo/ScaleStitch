@@ -2,6 +2,7 @@
 import re
 
 from . import natural_qa_metrics as metrics
+from . import host_normalization
 
 NATIVE = re.compile(r"<OBJ([0-9]{3})>[.!?]*")
 
@@ -38,9 +39,11 @@ def score_predictions(predictions, references, *, cohort, end_sym, scoring="natu
     """Return guarded predictions and paired outcome vectors for a fixed cohort."""
     if not isinstance(end_sym, str) or not end_sym:
         raise ValueError("nonempty recorded decoder end_sym required")
-    if scoring not in ("natural_qa", "native_id"):
-        raise ValueError("scoring must be natural_qa or native_id")
-    refs = metrics._references(references)
+    if scoring not in ("natural_qa", "native_id", "host_normalized_em1"):
+        raise ValueError("scoring must be natural_qa, native_id or host_normalized_em1")
+    primary = host_normalization.METRIC if scoring == "host_normalized_em1" else "protocol_normalized_exact"
+    metric_names = metrics.METRICS + ((primary,) if scoring == "host_normalized_em1" else ())
+    refs = metrics._references(references, metric_names=metric_names)
     selected = set(metrics._cohort(cohort, refs))
     rows = _unique(questions, "qid") if questions is not None else {}
     pairs = _pair_index(pair_metadata) if pair_metadata is not None else {}
@@ -62,9 +65,9 @@ def score_predictions(predictions, references, *, cohort, end_sym, scoring="natu
         raw_id = NATIVE.fullmatch(raw.split(end_sym, 1)[0].strip())
         mapped_id = NATIVE.fullmatch(mapped.strip())
         native = not invalid and raw_id is not None and mapped_id is not None
-        normalized = metrics.normalize_answer(mapped)
-        unrestricted = int(not invalid and bool(normalized)
-                           and normalized in refs[qid]["answers"]["protocol_normalized_exact"])
+        normalized = metrics.normalize_answer(mapped, metric=primary)
+        unrestricted = int(not invalid and bool(normalized.strip())
+                           and normalized in refs[qid]["answers"][primary])
         hit, in_pair = unrestricted, None
         evaluated = prediction
         if scoring == "native_id":
@@ -101,4 +104,7 @@ def score_predictions(predictions, references, *, cohort, end_sym, scoring="natu
                      "native_id_only": int(native), "normalized_without_native_guard": unrestricted}
     if not banks or any(set(bank) != selected for bank in banks.values()):
         raise ValueError("incomplete scored condition matrix")
-    return guarded, {"schema_version": "scalestitch_scored_rows/v1", "conditions": banks}
+    outcomes = {"schema_version": "scalestitch_scored_rows/v1", "conditions": banks}
+    if scoring == "host_normalized_em1":
+        outcomes.update(primary_metric=primary, metric_provenance=host_normalization.provenance())
+    return guarded, outcomes

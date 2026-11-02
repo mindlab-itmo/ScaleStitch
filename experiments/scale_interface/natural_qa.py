@@ -20,6 +20,8 @@ from .physical_stream_host_boundary import HostPhysicalStream, generation_questi
 from .scene_data import update_caption
 from .scene_measurements import build_scene_radius_packet
 from .scene_extents import build_scene_height_packet, normalize_measurement_source
+from .packet_scope import focus_scene_packet
+from .candidate_decision import candidate_token_decision, native_candidate_tokens
 
 
 OBJECT_CONTROLS = ("full", "zero_object_slots", "drop_object_features", "permute_object_slots")
@@ -34,6 +36,7 @@ class NaturalQACondition:
     unit: str = "cm"
     reverse: bool = False
     measurement: str = "radius"
+    packet_scope: str = "all_objects"
 
     def __post_init__(self):
         if self.representation not in REPRESENTATIONS or self.object_intervention not in OBJECT_CONTROLS:
@@ -44,6 +47,10 @@ class NaturalQACondition:
             raise ValueError("reverse must be boolean")
         if self.measurement not in ("radius", "height"):
             raise ValueError("measurement must be radius or height")
+        if self.packet_scope not in ("all_objects", "queried_pair"):
+            raise ValueError("packet_scope must be all_objects or queried_pair")
+        if self.representation == "absent" and self.packet_scope != "all_objects":
+            raise ValueError("reuse the unchanged absent baseline for both packet scopes")
         if self.representation == "absent" and (self.mode != "true" or self.unit != "cm" or self.reverse):
             raise ValueError("absent uses true/cm/forward to avoid duplicate identical conditions")
         if self.representation == "absent" and self.measurement != "radius":
@@ -55,7 +62,8 @@ class NaturalQACondition:
     def name(self):
         order = "reverse" if self.reverse else "forward"
         name = f"{self.object_intervention}_{self.representation}_{self.mode}_{self.unit}_{order}"
-        return name if self.measurement == "radius" else name + "_height"
+        name = name if self.measurement == "radius" else name + "_height"
+        return name if self.packet_scope == "all_objects" else name + "_queried_pair"
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,8 @@ class NaturalQAPlan:
     measurement_source_fingerprint: str = ""
     repetition_penalty: float = 3.0
     generation_fingerprint: str = ""
+    conditions_fingerprint: str = ""
+    decision_mode: str = "free"
 
     def metadata(self):
         metadata = {
@@ -114,11 +124,14 @@ class NaturalQAPlan:
             "dataset_fingerprint": self.dataset_fingerprint,
             "runtime_fingerprint": self.runtime_fingerprint,
             "generation_fingerprint": self.generation_fingerprint,
+            "conditions_fingerprint": self.conditions_fingerprint,
+            "decision_mode": self.decision_mode,
             "max_new_tokens": self.max_new_tokens,
             "maximum_length": self.maximum_length,
             "placement": self.placement,
             "constant_cm": self.constant_cm,
-            "generation": {"num_beams": 1, "do_sample": False, "use_cache": True,
+            "generation": {"num_beams": 1 if self.decision_mode == "free" else None,
+                           "do_sample": False, "use_cache": self.decision_mode == "free",
                            "repetition_penalty": self.repetition_penalty},
         }
         if self.measurement_source is not None:
@@ -127,11 +140,12 @@ class NaturalQAPlan:
         return metadata
 
 
-def _generation_identity(max_new_tokens, maximum_length, placement, constant_cm, repetition_penalty):
+def _generation_identity(max_new_tokens, maximum_length, placement, constant_cm, repetition_penalty,
+                         decision_mode="free"):
     return _fingerprint(dict(max_new_tokens=max_new_tokens, maximum_length=maximum_length,
                              placement=placement, constant_cm=constant_cm,
                              num_beams=1, do_sample=False, use_cache=True,
-                             repetition_penalty=repetition_penalty))
+                             repetition_penalty=repetition_penalty, decision_mode=decision_mode))
 
 
 def _fingerprint(value):
@@ -239,7 +253,16 @@ def _on_device(batch, device):
             for key, value in batch.items()}
 
 
-def _packet(batch, condition, constant_cm, *, measurement_source=None, scene_id=None):
+def _candidate_source_rows(prompt):
+    matches = list(re.finditer(r"<OBJ([0-9]{3})>", prompt))
+    rows = tuple(int(match.group(1)) for match in matches)
+    if len(rows) != 2 or len(set(rows)) != 2 or prompt.count("<OBJ") != 2:
+        raise ValueError("queried_pair requires exactly two distinct source object IDs in the original prompt")
+    return rows
+
+
+def _packet(batch, condition, constant_cm, *, measurement_source=None, scene_id=None,
+            candidate_source_rows=None):
     mask = batch["scene_mask"][0].tolist()
     visible = [index for index, active in enumerate(mask) if active]
     if condition.object_intervention == "permute_object_slots" and len(visible) < 2:
@@ -247,19 +270,25 @@ def _packet(batch, condition, constant_cm, *, measurement_source=None, scene_id=
     if condition.measurement == "height":
         heights = batch["scene_locs"][0, :, 5]
         valid = torch.isfinite(heights) & (heights > 0)
-        return build_scene_height_packet(
+        packet = build_scene_height_packet(
             scene_id=scene_id, measurement_source=measurement_source,
             assigned_rows=batch["assigned_ids"][0].tolist(), scene_mask=mask,
             height_m=heights.tolist(), height_valid=valid.tolist(),
             mode=condition.mode, unit=condition.unit, constant_cm=constant_cm,
             record_order=list(reversed(visible)) if condition.reverse else None,
         )
-    return build_scene_radius_packet(
-        assigned_rows=batch["assigned_ids"][0].tolist(), scene_mask=mask,
-        radius_m=batch["scene_radius"][0].tolist(), radius_valid=batch["radius_valid"][0].tolist(),
-        mode=condition.mode, unit=condition.unit, constant_cm=constant_cm,
-        record_order=list(reversed(visible)) if condition.reverse else None,
-    )
+    else:
+        packet = build_scene_radius_packet(
+            assigned_rows=batch["assigned_ids"][0].tolist(), scene_mask=mask,
+            radius_m=batch["scene_radius"][0].tolist(), radius_valid=batch["radius_valid"][0].tolist(),
+            mode=condition.mode, unit=condition.unit, constant_cm=constant_cm,
+            record_order=list(reversed(visible)) if condition.reverse else None,
+        )
+    if condition.packet_scope == "queried_pair":
+        if candidate_source_rows is None:
+            raise ValueError("queried_pair requires explicit candidate source rows")
+        packet = focus_scene_packet(packet, candidate_source_rows=candidate_source_rows)
+    return packet
 
 
 def _encode(core, text):
@@ -359,9 +388,12 @@ def _prefix_size(kwargs, maximum_length, max_new_tokens):
 
 def _run_one(core, batch, question, packet, condition, *, codec, random_codec,
              max_new_tokens, maximum_length, placement, capture_only, expected=None,
-             repetition_penalty=3.0):
+             repetition_penalty=3.0, decision_mode="free"):
     original_generate = core.llama_model.generate
     observed, decoded = [], []
+    if decision_mode == "candidate_logits":
+        candidates = tuple(f"<OBJ{row:03d}>" for row in _candidate_source_rows(question))
+        native_candidate_tokens(core.llama_tokenizer, candidates)
 
     def capture_or_generate(**kwargs):
         observed.append(_prefix_size(kwargs, maximum_length, max_new_tokens))
@@ -372,10 +404,18 @@ def _run_one(core, batch, question, packet, condition, *, codec, random_codec,
             raise RuntimeError("generation prefix differs from its completed preflight")
         if capture_only:
             raise _PrefixCaptured()
-        generated = original_generate(**kwargs)
+        decision = None
+        if decision_mode == "candidate_logits":
+            generated, decision = candidate_token_decision(core.llama_model, core.llama_tokenizer,
+                inputs_embeds=kwargs["inputs_embeds"], attention_mask=kwargs["attention_mask"],
+                candidate_identifiers=candidates)
+        else:
+            generated = original_generate(**kwargs)
         if not isinstance(generated, torch.Tensor) or generated.ndim != 2 or generated.shape[0] != 1:
             raise RuntimeError("one tensor of generated token IDs is required")
         decoded.append(_decoded_prediction(core, generated[0].detach().cpu(), batch))
+        if decision is not None:
+            decoded[-1]["candidate_decision"] = decision
         # Bypass the retained host's random fallback for invalid object IDs.
         raise _PredictionCaptured()
 
@@ -436,7 +476,7 @@ def _check_request(core, conditions, codec, random_codec, max_new_tokens, maximu
 def preflight_natural_qa(core, dataset, conditions, *, codec=None, random_codec=None,
                          max_new_tokens=32, maximum_length=2502, placement="question_tail",
                          constant_cm=100, progress=None, measurement_source=None,
-                         repetition_penalty=3.0):
+                         repetition_penalty=3.0, decision_mode="free"):
     """Check every condition before generation and exclude a row from all together.
 
     Actual embeddings, attention masks and inserted-packet lengths are checked.
@@ -444,6 +484,10 @@ def preflight_natural_qa(core, dataset, conditions, *, codec=None, random_codec=
     runs on the host device, retaining only one scene batch there at a time.
     """
     repetition_penalty = validate_repetition_penalty(repetition_penalty)
+    if decision_mode not in ("free", "candidate_logits"):
+        raise ValueError("decision_mode must be free or candidate_logits")
+    if decision_mode == "candidate_logits" and repetition_penalty != 1.0:
+        raise ValueError("candidate_logits requires neutral repetition_penalty=1.0")
     conditions, maximum_length = _check_request(
         core, conditions, codec, random_codec, max_new_tokens, maximum_length, placement, constant_cm)
     if core.host_mode == "full" and not getattr(dataset, "full_input", False):
@@ -478,11 +522,13 @@ def preflight_natural_qa(core, dataset, conditions, *, codec=None, random_codec=
             for condition in conditions:
                 try:
                     packet = _packet(cpu_batch, condition, constant_cm,
-                                     measurement_source=measurement_source, scene_id=scene)
+                                     measurement_source=measurement_source, scene_id=scene,
+                                     candidate_source_rows=_candidate_source_rows(dataset.anno[index]["prompt"])
+                                     if condition.packet_scope == "queried_pair" else None)
                     budget, _ = _run_one(core, device_batch, question, packet, condition,
                                         codec=codec, random_codec=random_codec, max_new_tokens=max_new_tokens,
                                         maximum_length=maximum_length, placement=placement, capture_only=True,
-                                        repetition_penalty=repetition_penalty)
+                                        repetition_penalty=repetition_penalty, decision_mode=decision_mode)
                     budgets.append(budget)
                 except (ValueError, KeyError, IndexError) as error:
                     failures.append(NaturalQAExclusion(index, qid, scene, condition.name, str(error)))
@@ -502,7 +548,9 @@ def preflight_natural_qa(core, dataset, conditions, *, codec=None, random_codec=
                          measurement_source, "" if measurement_source is None else _fingerprint(measurement_source),
                          repetition_penalty=repetition_penalty,
                          generation_fingerprint=_generation_identity(max_new_tokens, maximum_length, placement,
-                                                                     constant_cm, repetition_penalty))
+                                                                     constant_cm, repetition_penalty, decision_mode),
+                         conditions_fingerprint=_fingerprint([asdict(c) for c in conditions]),
+                         decision_mode=decision_mode)
 
 
 def iter_natural_qa(core, dataset, plan, *, codec=None, random_codec=None,
@@ -516,8 +564,10 @@ def iter_natural_qa(core, dataset, plan, *, codec=None, random_codec=None,
     if not isinstance(plan, NaturalQAPlan) or not plan.rows:
         raise ValueError("generation requires a nonempty completed NaturalQAPlan")
     validate_repetition_penalty(plan.repetition_penalty)
+    if _fingerprint([asdict(c) for c in plan.conditions]) != plan.conditions_fingerprint:
+        raise ValueError("conditions differ from the completed preflight")
     if _generation_identity(plan.max_new_tokens, plan.maximum_length, plan.placement,
-                            plan.constant_cm, plan.repetition_penalty) != plan.generation_fingerprint:
+                            plan.constant_cm, plan.repetition_penalty, plan.decision_mode) != plan.generation_fingerprint:
         raise ValueError("generation settings differ from the completed preflight")
     if getattr(core, "missing_channel_policy", "reject") != getattr(dataset, "missing_channel_policy", "reject"):
         raise ValueError("host and data missing-channel policies disagree")
@@ -553,19 +603,28 @@ def iter_natural_qa(core, dataset, plan, *, codec=None, random_codec=None,
                     continue
                 start = time.monotonic()
                 packet = _packet(cpu_batch, condition, plan.constant_cm,
-                                 measurement_source=plan.measurement_source, scene_id=scene)
+                                 measurement_source=plan.measurement_source, scene_id=scene,
+                                 candidate_source_rows=_candidate_source_rows(dataset.anno[prepared.index]["prompt"])
+                                 if condition.packet_scope == "queried_pair" else None)
                 observed, prediction = _run_one(
                     core, device_batch, question, packet, condition, codec=codec, random_codec=random_codec,
                     max_new_tokens=plan.max_new_tokens, maximum_length=plan.maximum_length,
                     placement=plan.placement, capture_only=False, expected=expected,
-                    repetition_penalty=plan.repetition_penalty)
+                    repetition_penalty=plan.repetition_penalty, decision_mode=plan.decision_mode)
                 if observed != expected:
                     raise RuntimeError("generated prefix differs from its completed preflight")
+                if condition.packet_scope == "queried_pair":
+                    prediction["packet_metadata"] = dict(packet.metadata(),
+                        display_representation=condition.representation,
+                        numeric_metadata_is_displayed=condition.representation != "masked")
                 yield {"qid": qid, "scene_id": scene, "condition": condition.name, **prediction,
                        "packet_tokens": observed.packet_tokens, "prefix_tokens": observed.prefix_tokens,
                        "native_tokens": observed.native_tokens, "numerical_blocks": observed.numerical_blocks,
-                       "effective_generation": {"max_new_tokens": plan.max_new_tokens, "num_beams": 1,
-                           "do_sample": False, "use_cache": True, "repetition_penalty": plan.repetition_penalty},
+                       "effective_generation": {
+                           "max_new_tokens": plan.max_new_tokens if plan.decision_mode == "free" else 1,
+                           "num_beams": 1 if plan.decision_mode == "free" else None,
+                           "do_sample": False, "use_cache": plan.decision_mode == "free",
+                           "repetition_penalty": plan.repetition_penalty, "decision_mode": plan.decision_mode},
                        "elapsed_seconds": time.monotonic() - start}
         finally:
             del device_batch
