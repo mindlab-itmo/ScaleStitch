@@ -44,9 +44,18 @@ def _config_keys(node):
 def preferred_cuda_dtype():
     if not torch.cuda.is_available():
         return torch.float32
+    # PyTorch may report emulated BF16 tensor storage on pre-Ampere devices.
+    # V100 must use FP16 for both model loading and the host's autocast.
+    if torch.cuda.get_device_capability()[0] < 8:
+        return torch.float16
     is_supported = getattr(torch.cuda, "is_bf16_supported", None)
-    if callable(is_supported) and is_supported():
-        return torch.bfloat16
+    if callable(is_supported):
+        try:
+            supported = is_supported(including_emulation=False)
+        except TypeError:  # Older PyTorch versions have no emulation argument.
+            supported = is_supported()
+        if supported:
+            return torch.bfloat16
     return torch.float16
 
 
