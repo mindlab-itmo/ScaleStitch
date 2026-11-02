@@ -133,7 +133,8 @@ class NaturalCLI(unittest.TestCase):
              mock.patch.object(cli, "_generate_scene", return_value={"status": "complete"}) as scene:
             cli.main()
         load.assert_called_once_with({"model": {}}, device="cpu")
-        scene.assert_called_once_with(self.core, self.data, mock.ANY, target, self.options)
+        scene.assert_called_once_with(self.core, self.data, mock.ANY, target,
+                                      {**self.options, "repetition_penalty": 3.0})
         self.assertEqual(json.loads((target / "result.json").read_text())["status"], "complete")
 
 

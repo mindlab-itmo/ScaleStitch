@@ -57,7 +57,7 @@ def _generate_scene_controlled(core, data, config, output, options, intervention
         if source["input_id"] != digest.hexdigest():
             raise ValueError("height declaration differs from actual attributes")
         measurement_options["measurement_source"] = source
-    allowed_options = {"max_new_tokens", "maximum_length", "placement", "constant_cm"}
+    allowed_options = {"max_new_tokens", "maximum_length", "placement", "constant_cm", "repetition_penalty"}
     if set(options) - allowed_options:
         raise ValueError(f"unknown generate-scene options: {sorted(set(options) - allowed_options)}")
     options.setdefault("max_new_tokens", 32)
@@ -107,12 +107,18 @@ def main(argv=None):
     parser.add_argument("action", choices=["generate-scene"])
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--repetition-penalty", type=float, default=None,
+                        help="Positive finite override of run.repetition_penalty (default 3.0)")
     args = parser.parse_args(argv)
     args.output.mkdir(parents=True, exist_ok=False)
     command = [sys.executable, "-m", __package__, *(sys.argv[1:] if argv is None else argv)]
     with RuntimeProvenance(args.output, args.action, args.config, command=command, torch_module=torch) as provenance:
         config = json.loads(args.config.read_text(encoding="utf-8-sig"))
         _public_conditions(config, config.get("run", {}))
+        from .physical_stream_host_boundary import validate_repetition_penalty
+        configured = config["run"].get("repetition_penalty", 3.0)
+        config["run"]["repetition_penalty"] = validate_repetition_penalty(
+            configured if args.repetition_penalty is None else args.repetition_penalty)
         provenance.configure(config)
         result = _execute(args, config, provenance)
         with (args.output / "result.json").open("x", encoding="utf-8") as stream:

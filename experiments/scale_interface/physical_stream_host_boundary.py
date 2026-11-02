@@ -1,6 +1,21 @@
 """Measurement insertion into causal object-only and full image/graph hosts."""
+import math
+from numbers import Real
 import torch
 from .role_bound_metric_schema import canonical_parts
+
+
+def validate_repetition_penalty(value):
+    """Return a positive finite decoder penalty; bool/string values are errors."""
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError('repetition_penalty must be a finite positive number')
+    try:
+        value = float(value)
+    except OverflowError as error:
+        raise ValueError('repetition_penalty must be finite and positive') from error
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError('repetition_penalty must be finite and positive')
+    return value
 
 
 def encode_packet(core, records, queried_ids, *, representation, codec=None):
@@ -81,8 +96,11 @@ class HostPhysicalStream:
             raise ValueError('full boundary requires image and graph tokens without scene/bbox tokens')
         self.core = core
         self.generation_options = dict(generation_options or {})
-        if set(self.generation_options) - {'max_new_tokens','num_beams','do_sample','use_cache'}:
+        if set(self.generation_options) - {'max_new_tokens','num_beams','do_sample','use_cache','repetition_penalty'}:
             raise ValueError('undeclared generation override')
+        if 'repetition_penalty' in self.generation_options:
+            self.generation_options['repetition_penalty'] = validate_repetition_penalty(
+                self.generation_options['repetition_penalty'])
         self.active = False
         self.armed = False
 

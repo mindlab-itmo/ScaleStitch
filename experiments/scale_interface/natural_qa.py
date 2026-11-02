@@ -16,7 +16,7 @@ from typing import Tuple
 import torch
 
 from .conditions import compress
-from .physical_stream_host_boundary import HostPhysicalStream, generation_question_boundary
+from .physical_stream_host_boundary import HostPhysicalStream, generation_question_boundary, validate_repetition_penalty
 from .scene_data import update_caption
 from .scene_measurements import build_scene_radius_packet
 from .scene_extents import build_scene_height_packet, normalize_measurement_source
@@ -99,6 +99,8 @@ class NaturalQAPlan:
     constant_cm: int
     measurement_source: object = None
     measurement_source_fingerprint: str = ""
+    repetition_penalty: float = 3.0
+    generation_fingerprint: str = ""
 
     def metadata(self):
         metadata = {
@@ -111,16 +113,25 @@ class NaturalQAPlan:
             "rows": [asdict(r) for r in self.rows],
             "dataset_fingerprint": self.dataset_fingerprint,
             "runtime_fingerprint": self.runtime_fingerprint,
+            "generation_fingerprint": self.generation_fingerprint,
             "max_new_tokens": self.max_new_tokens,
             "maximum_length": self.maximum_length,
             "placement": self.placement,
             "constant_cm": self.constant_cm,
-            "generation": {"num_beams": 1, "do_sample": False, "use_cache": True},
+            "generation": {"num_beams": 1, "do_sample": False, "use_cache": True,
+                           "repetition_penalty": self.repetition_penalty},
         }
         if self.measurement_source is not None:
             metadata["measurement_source"] = json.loads(json.dumps(self.measurement_source))
             metadata["measurement_source_fingerprint"] = self.measurement_source_fingerprint
         return metadata
+
+
+def _generation_identity(max_new_tokens, maximum_length, placement, constant_cm, repetition_penalty):
+    return _fingerprint(dict(max_new_tokens=max_new_tokens, maximum_length=maximum_length,
+                             placement=placement, constant_cm=constant_cm,
+                             num_beams=1, do_sample=False, use_cache=True,
+                             repetition_penalty=repetition_penalty))
 
 
 def _fingerprint(value):
@@ -347,7 +358,8 @@ def _prefix_size(kwargs, maximum_length, max_new_tokens):
 
 
 def _run_one(core, batch, question, packet, condition, *, codec, random_codec,
-             max_new_tokens, maximum_length, placement, capture_only, expected=None):
+             max_new_tokens, maximum_length, placement, capture_only, expected=None,
+             repetition_penalty=3.0):
     original_generate = core.llama_model.generate
     observed, decoded = [], []
 
@@ -368,7 +380,8 @@ def _run_one(core, batch, question, packet, condition, *, codec, random_codec,
         raise _PredictionCaptured()
 
     options = {"max_new_tokens": max_new_tokens, "num_beams": 1,
-               "do_sample": False, "use_cache": True}
+               "do_sample": False, "use_cache": True,
+               "repetition_penalty": validate_repetition_penalty(repetition_penalty)}
     with _evaluation_state(core, codec, random_codec, condition.object_intervention), torch.no_grad():
         payload = encode_scene_packet(core, packet, condition.representation, codec=codec, random_codec=random_codec)
         offset = generation_question_boundary(question, core.role[1], lambda text: _encode(core, text))
@@ -422,13 +435,15 @@ def _check_request(core, conditions, codec, random_codec, max_new_tokens, maximu
 
 def preflight_natural_qa(core, dataset, conditions, *, codec=None, random_codec=None,
                          max_new_tokens=32, maximum_length=2502, placement="question_tail",
-                         constant_cm=100, progress=None, measurement_source=None):
+                         constant_cm=100, progress=None, measurement_source=None,
+                         repetition_penalty=3.0):
     """Check every condition before generation and exclude a row from all together.
 
     Actual embeddings, attention masks and inserted-packet lengths are checked.
     No language-model prediction is computed. Model projection/embedding work
     runs on the host device, retaining only one scene batch there at a time.
     """
+    repetition_penalty = validate_repetition_penalty(repetition_penalty)
     conditions, maximum_length = _check_request(
         core, conditions, codec, random_codec, max_new_tokens, maximum_length, placement, constant_cm)
     if core.host_mode == "full" and not getattr(dataset, "full_input", False):
@@ -466,7 +481,8 @@ def preflight_natural_qa(core, dataset, conditions, *, codec=None, random_codec=
                                      measurement_source=measurement_source, scene_id=scene)
                     budget, _ = _run_one(core, device_batch, question, packet, condition,
                                         codec=codec, random_codec=random_codec, max_new_tokens=max_new_tokens,
-                                        maximum_length=maximum_length, placement=placement, capture_only=True)
+                                        maximum_length=maximum_length, placement=placement, capture_only=True,
+                                        repetition_penalty=repetition_penalty)
                     budgets.append(budget)
                 except (ValueError, KeyError, IndexError) as error:
                     failures.append(NaturalQAExclusion(index, qid, scene, condition.name, str(error)))
@@ -483,7 +499,10 @@ def preflight_natural_qa(core, dataset, conditions, *, codec=None, random_codec=
         raise RuntimeError("inputs or runtime changed during preflight")
     return NaturalQAPlan(conditions, tuple(rows), tuple(exclusions), dataset_identity, runtime_identity,
                          len(dataset.anno), max_new_tokens, maximum_length, placement, constant_cm,
-                         measurement_source, "" if measurement_source is None else _fingerprint(measurement_source))
+                         measurement_source, "" if measurement_source is None else _fingerprint(measurement_source),
+                         repetition_penalty=repetition_penalty,
+                         generation_fingerprint=_generation_identity(max_new_tokens, maximum_length, placement,
+                                                                     constant_cm, repetition_penalty))
 
 
 def iter_natural_qa(core, dataset, plan, *, codec=None, random_codec=None,
@@ -496,6 +515,10 @@ def iter_natural_qa(core, dataset, plan, *, codec=None, random_codec=None,
     """
     if not isinstance(plan, NaturalQAPlan) or not plan.rows:
         raise ValueError("generation requires a nonempty completed NaturalQAPlan")
+    validate_repetition_penalty(plan.repetition_penalty)
+    if _generation_identity(plan.max_new_tokens, plan.maximum_length, plan.placement,
+                            plan.constant_cm, plan.repetition_penalty) != plan.generation_fingerprint:
+        raise ValueError("generation settings differ from the completed preflight")
     if getattr(core, "missing_channel_policy", "reject") != getattr(dataset, "missing_channel_policy", "reject"):
         raise ValueError("host and data missing-channel policies disagree")
     if (plan.measurement_source is not None
@@ -534,12 +557,15 @@ def iter_natural_qa(core, dataset, plan, *, codec=None, random_codec=None,
                 observed, prediction = _run_one(
                     core, device_batch, question, packet, condition, codec=codec, random_codec=random_codec,
                     max_new_tokens=plan.max_new_tokens, maximum_length=plan.maximum_length,
-                    placement=plan.placement, capture_only=False, expected=expected)
+                    placement=plan.placement, capture_only=False, expected=expected,
+                    repetition_penalty=plan.repetition_penalty)
                 if observed != expected:
                     raise RuntimeError("generated prefix differs from its completed preflight")
                 yield {"qid": qid, "scene_id": scene, "condition": condition.name, **prediction,
                        "packet_tokens": observed.packet_tokens, "prefix_tokens": observed.prefix_tokens,
                        "native_tokens": observed.native_tokens, "numerical_blocks": observed.numerical_blocks,
+                       "effective_generation": {"max_new_tokens": plan.max_new_tokens, "num_beams": 1,
+                           "do_sample": False, "use_cache": True, "repetition_penalty": plan.repetition_penalty},
                        "elapsed_seconds": time.monotonic() - start}
         finally:
             del device_batch
