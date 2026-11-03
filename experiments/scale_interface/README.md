@@ -15,6 +15,7 @@ The revision examples specify neutral repetition handling (`1.0`) and host-norma
 | `score_natural_qa.py`, `prediction_scoring.py` | Score completed runs and export per-question diagnostic outcomes. |
 | `diagnostic_metrics.py`, `matched_question_metrics.py` | Paired effects, interactions, and scene-family bootstrap intervals. |
 | `packet_scope.py`, `candidate_decision.py` | Candidate-only packets and restricted two-ID decisions. |
+| `interface_control_metrics.py` | Full fourteen-cell scope/decision analysis, packet agreement, transitions, and probability summaries. |
 | `text_only_baseline.py` | Plain-label text input and scoring helpers. |
 | `text_baseline_cli.py`, `text_baseline_runtime.py`, `text_baseline_statistics.py` | Vanilla Llama text-only generation and paired scoring. |
 | `host_normalization.py` | Published host answer normalization for revised natural-question scoring. |
@@ -130,3 +131,11 @@ The revision config sets `run.repetition_penalty=1.0`. `--repetition-penalty` ov
 For direct-ID comparisons, add `"packet_scope": "queried_pair"` to a packet condition. The original question must name exactly two source IDs. The packet keeps their records from the full-scene intervention, including its original reassignment donors. Reuse the unchanged absent condition.
 
 Set `run.decision_mode` to `"candidate_logits"` with repetition penalty `1.0` to select between the two candidate ID tokens. This uses the same scene prefix and reports raw next-token logits and pair probability before generation processors. `"free"` retains ordinary answer generation.
+
+Analyze the fourteen unique cells for both properties together:
+
+```powershell
+python -m experiments.scale_interface.interface_control_metrics --config analysis.json --output interface_metrics.json
+```
+
+`analysis.json` supplies `metadata`, `banks`, `expected_counts`, and `expected_s_ranking_counts` dictionaries keyed by `radius` and `height`, plus `end_sym`, `native_token_start`, and `native_token_count`. File paths resolve from that config. `prepare_metadata` builds each metadata record from the source question/reference and full/focused packet records. Banks contain `af.A/T/C/S`, `pf.T/C/S`, `ar.A/T/C/S`, and `pr.T/C/S`: all/pair packets crossed with free/restricted decisions. Input populations are checked before answers are opened. The primary eight contrasts use 100000 scene-family resamples; secondary intervals retain their separate local families.
