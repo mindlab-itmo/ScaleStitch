@@ -1,0 +1,43 @@
+{
+  "host_config": "experiments/scale_interface/configs/revision_object_only.json",
+  "splits": {
+    "train": {
+      "features": "assets/packet_lora/train/features.pt",
+      "radii": "assets/packet_lora/train/features.radius.pt",
+      "attributes": "assets/packet_lora/train/attributes.pt",
+      "height_measurement_source": "assets/packet_lora/train/height_measurement_source.json",
+      "radius": {
+        "questions": "assets/packet_lora/train/radius/questions.json",
+        "labels": "assets/packet_lora/train/radius/labels.json",
+        "cohort": "assets/packet_lora/train/radius/cohort.json"
+      },
+      "height": {
+        "questions": "assets/packet_lora/train/height/questions.json",
+        "labels": "assets/packet_lora/train/height/labels.json",
+        "cohort": "assets/packet_lora/train/height/cohort.json"
+      }
+    },
+    "validation": {
+      "features": "assets/packet_lora/validation/features.pt",
+      "radii": "assets/packet_lora/validation/features.radius.pt",
+      "attributes": "assets/packet_lora/validation/attributes.pt",
+      "height_measurement_source": "assets/packet_lora/validation/height_measurement_source.json",
+      "radius": {
+        "questions": "assets/packet_lora/validation/radius/questions.json",
+        "labels": "assets/packet_lora/validation/radius/labels.json",
+        "cohort": "assets/packet_lora/validation/radius/cohort.json"
+      },
+      "height": {
+        "questions": "assets/packet_lora/validation/height/questions.json",
+        "labels": "assets/packet_lora/validation/height/labels.json",
+        "cohort": "assets/packet_lora/validation/height/cohort.json"
+      }
+    }
+  },
+  "held_out_scenes": "assets/packet_lora/held_out_scenes.json",
+  "expected_counts": {
+    "train": {"radius": 35321, "height": 35330},
+    "validation": {"radius": 2187, "height": 2183}
+  },
+  "input_sha256": {}
+}

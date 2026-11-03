@@ -1,0 +1,15 @@
+{
+  "schema_version": "scalestitch_text_baseline/v1",
+  "task": "radius",
+  "model": {"local_path": "../../../assets/Meta-Llama-3-8B-Instruct"},
+  "seed": 20260911,
+  "device": "cuda",
+  "data": {
+    "features": "../../../assets/features.pt",
+    "radii": "../../../assets/features.radius.pt",
+    "attributes": "../../../assets/attributes.pt",
+    "rows": "../../../assets/controlled/direct.json",
+    "feature_dim": 1280
+  },
+  "cohort": "../../../assets/controlled/cohort_direct.json"
+}

@@ -4,9 +4,11 @@ Inference and evaluation code for **When Size Helps and Hurts: Physical Measurem
 
 The pipeline assembles cached object, image, and directed-relation features, runs a frozen 3DGraphLLM under measurement controls, scores answers, and computes paired statistical comparisons.
 
+The revision examples use repetition penalty `1.0` and host-normalized EM1 for natural questions. The original examples remain available for legacy reproduction.
+
 Supply prepared features, physical measurements, question annotations, and pretrained model checkpoints. ULIP-2 features also require a fitted bridge checkpoint. Feature extraction and bridge fitting precede this pipeline.
 
-From the repository root in PowerShell or a Linux shell:
+Use Python 3.10. From the repository root in PowerShell or a Linux shell:
 
 ```powershell
 python -m pip install -r requirements.txt
