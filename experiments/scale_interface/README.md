@@ -16,6 +16,7 @@ The revision examples specify neutral repetition handling (`1.0`) and host-norma
 | `diagnostic_metrics.py`, `matched_question_metrics.py` | Paired effects, interactions, and scene-family bootstrap intervals. |
 | `packet_scope.py`, `candidate_decision.py` | Candidate-only packets and restricted two-ID decisions. |
 | `interface_control_metrics.py` | Full fourteen-cell scope/decision analysis, packet agreement, transitions, and probability summaries. |
+| `matched_exposure_analysis.py` | CPU analysis of matched packet exposure across parent and two trained checkpoints, with 36 accuracy cells and nine planned interactions. |
 | `text_only_baseline.py` | Plain-label text input and scoring helpers. |
 | `text_baseline_cli.py`, `text_baseline_runtime.py`, `text_baseline_statistics.py` | Vanilla Llama text-only generation and paired scoring. |
 | `host_normalization.py` | Published host answer normalization for revised natural-question scoring. |
@@ -139,3 +140,11 @@ python -m experiments.scale_interface.interface_control_metrics --config analysi
 ```
 
 `analysis.json` supplies `metadata`, `banks`, `expected_counts`, and `expected_s_ranking_counts` dictionaries keyed by `radius` and `height`, plus `end_sym`, `native_token_start`, and `native_token_count`. File paths resolve from that config. `prepare_metadata` builds each metadata record from the source question/reference and full/focused packet records. Banks contain `af.A/T/C/S`, `pf.T/C/S`, `ar.A/T/C/S`, and `pr.T/C/S`: all/pair packets crossed with free/restricted decisions. Input populations are checked before answers are opened. The primary eight contrasts use 100000 scene-family resamples; secondary intervals retain their separate local families.
+
+Analyze completed matched-exposure outputs on CPU:
+
+```powershell
+python -m experiments.scale_interface.matched_exposure_analysis --config matched_exposure.json --output matched_exposure_metrics.json
+```
+
+The config supplies `metadata`, `references`, `raw_banks`, `input_bindings`, `model_provenance`, and `end_sym`. Each input role is a JSON filename or a nested filename map matching its data layout; paths resolve from the config. Metadata and references are keyed by `radius`, `height`, and `sqa3d`; banks and bindings use `parent/Atrain/Ttrain`, then task, then `A/T/C/S`. Metadata binds the ordered cohort, object mapping, packets, input/data hashes, and prefix budgets; each bank repeats those input bindings and retains unmodified raw/mapped predictions and decoder settings. Model checkpoint hashes remain separate in `model_provenance`. Optional `expected_counts` and `expected_families` declare another complete input matrix. The output records every input hash and the actual CPU source hashes; nine prespecified interactions use 100000 scene-family resamples with seed 20260911. Omit `--config` to describe the default matrix without reading inputs.
