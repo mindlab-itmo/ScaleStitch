@@ -1,4 +1,5 @@
 import argparse
+from contextlib import nullcontext
 import hashlib
 import json
 from pathlib import Path
@@ -17,6 +18,8 @@ def _public_conditions(config, options):
 
     if not isinstance(config, dict) or not isinstance(options, dict):
         raise ValueError("configuration and run options must be objects")
+    if type(options.get("complete_host_ending", False)) is not bool:
+        raise ValueError("run.complete_host_ending must be a boolean")
     if any(key in config for key in ("codec", "random_codec_seed")):
         raise ValueError("codec settings are not supported by the frozen-host CLI")
     specifications = options.get("conditions")
@@ -43,6 +46,7 @@ def _generate_scene_controlled(core, data, config, output, options, intervention
     requested = _public_conditions(config, options)
     options = dict(options)
     options.pop("conditions")
+    complete_host_ending = options.pop("complete_host_ending", False)
     filters = {key: options.pop(key, None) for key in ("condition_names", "question_ids")}
     measurement_options = {}
     if "measurement_source" in options:
@@ -62,44 +66,51 @@ def _generate_scene_controlled(core, data, config, output, options, intervention
         raise ValueError(f"unknown generate-scene options: {sorted(set(options) - allowed_options)}")
     options.setdefault("max_new_tokens", 32)
     plan = preflight_natural_qa(core, data, requested, **measurement_options, **options)
-    metadata = plan.metadata()
-    metadata["channel_intervention"] = intervention
-    metadata["requested_generation"] = filters
-    (output / "plan.json").write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
-    allowed = {"condition_names": [value.name for value in plan.conditions],
-               "question_ids": [row.qid for row in plan.rows]}
-    if not allowed["question_ids"]:
-        raise ValueError("no questions passed all-condition preflight; see plan.json exclusions")
-    selected = {}
-    for key, values in filters.items():
-        if values is None:
-            selected[key] = allowed[key]
-            continue
-        if (not isinstance(values, list) or not values
-                or any(not isinstance(value, str) for value in values)
-                or len(set(values)) != len(values)):
-            raise ValueError(f"run.{key} must be a nonempty list of unique strings")
-        missing = set(values) - set(allowed[key])
-        if missing:
-            raise ValueError(f"run.{key} contains unknown or excluded values: {sorted(missing)}; see plan.json")
-        selected[key] = values
-    with (output / "cohort.json").open("x", encoding="utf-8") as stream:
-        json.dump(selected["question_ids"], stream, indent=2, ensure_ascii=False, allow_nan=False)
-        stream.write("\n")
-    count = 0
-    iterator = iter_natural_qa(core, data, plan, **selected)
-    try:
-        with (output / "predictions.jsonl").open("x", encoding="utf-8", buffering=1) as stream:
-            for row in iterator:
-                stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
-                stream.flush()
-                count += 1
-    finally:
-        iterator.close()
-    if count != len(selected["question_ids"]) * len(selected["condition_names"]):
-        raise RuntimeError("incomplete question/condition matrix")
-    return {"status": "complete", "completed_predictions": count, **selected}
+    ending_context = nullcontext({"protocol": "legacy_host_stops/v1"})
+    if complete_host_ending:
+        from .packet_lora import complete_answer_stopping
+        ending_context = complete_answer_stopping(core)
+    with ending_context as answer_stopping:
+        metadata = plan.metadata()
+        metadata["channel_intervention"] = intervention
+        metadata["requested_generation"] = filters
+        metadata["answer_stopping"] = answer_stopping
+        (output / "plan.json").write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
+        allowed = {"condition_names": [value.name for value in plan.conditions],
+                   "question_ids": [row.qid for row in plan.rows]}
+        if not allowed["question_ids"]:
+            raise ValueError("no questions passed all-condition preflight; see plan.json exclusions")
+        selected = {}
+        for key, values in filters.items():
+            if values is None:
+                selected[key] = allowed[key]
+                continue
+            if (not isinstance(values, list) or not values
+                    or any(not isinstance(value, str) for value in values)
+                    or len(set(values)) != len(values)):
+                raise ValueError(f"run.{key} must be a nonempty list of unique strings")
+            missing = set(values) - set(allowed[key])
+            if missing:
+                raise ValueError(f"run.{key} contains unknown or excluded values: {sorted(missing)}; see plan.json")
+            selected[key] = values
+        with (output / "cohort.json").open("x", encoding="utf-8") as stream:
+            json.dump(selected["question_ids"], stream, indent=2, ensure_ascii=False, allow_nan=False)
+            stream.write("\n")
+        count = 0
+        iterator = iter_natural_qa(core, data, plan, **selected)
+        try:
+            with (output / "predictions.jsonl").open("x", encoding="utf-8", buffering=1) as stream:
+                for row in iterator:
+                    stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+                    stream.flush()
+                    count += 1
+        finally:
+            iterator.close()
+        if count != len(selected["question_ids"]) * len(selected["condition_names"]):
+            raise RuntimeError("incomplete question/condition matrix")
+        return {"status": "complete", "completed_predictions": count,
+                "answer_stopping": answer_stopping, **selected}
 
 
 def main(argv=None):

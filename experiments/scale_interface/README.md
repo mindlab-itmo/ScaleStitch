@@ -115,6 +115,8 @@ For held-out inference, export the completed epoch into a new host checkpoint:
 python -m experiments.scale_interface.packet_lora_cli export-host --config assets/packet_lora/pinned.json --arm $arm --training-output runs/matched_lora --output runs/exported_host
 ```
 
+For exported packet-trained hosts, set `run.complete_host_ending` to `true`; the default `false` retains legacy stopping. `plan.json` and `result.json` record the effective policy.
+
 Set `host.host_checkpoint` in the matching held-out inference config to `runs/exported_host/host.pt`, then use the existing `generate-scene` and scoring commands. The export replaces only the trained LoRA tensors and keeps the source embeddings, head and projectors. Its manifest records the source, stage and exported checkpoint hashes.
 
 ## Outputs and controls
