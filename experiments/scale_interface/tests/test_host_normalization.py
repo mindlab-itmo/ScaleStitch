@@ -55,7 +55,12 @@ class HostNormalizationTests(unittest.TestCase):
     def test_published_function_is_ast_identical_to_pinned_source(self):
         host = self.host()
         tree = ast.parse(inspect.getsource(host.clean_answer))
-        digest = hashlib.sha256(ast.dump(tree.body[0], include_attributes=False).encode()).hexdigest()
+        function = tree.body[0]
+        # Python 3.13 omits empty list fields from ast.dump; older versions do not.
+        # Canonicalize those fields (including 3.12's empty type_params) only.
+        for node in ast.walk(function):
+            node._fields = tuple(name for name in node._fields if getattr(node, name, None) != [])
+        digest = hashlib.sha256(ast.dump(function, include_attributes=False).encode()).hexdigest()
         # Derived from the audited helper, whose whole-file SHA is SOURCE_SHA.
         self.assertEqual(digest, "c39a43084e3e42c2836457982d1bfade0e3b6890caf8c913ed8e711bc2a87836")
         self.assertEqual(host.provenance()["source_sha256"], SOURCE_SHA)

@@ -206,7 +206,8 @@ class PacketLoraCommandTests(unittest.TestCase):
         cli = self.runtime()
         from scale_interface.natural_qa import NaturalQACondition
         records = [("radius", 0, 0), ("height", 0, 0)]
-        core = types.SimpleNamespace(end_sym="</s>")
+        core = DifferentiableHost()
+        core.end_sym = "</s>"
         stopped, calls = [], []
         def inputs(record, arm):
             prop, index, target = record
@@ -254,7 +255,8 @@ class PacketLoraCommandTests(unittest.TestCase):
         for tamper in ("score", "qid", "raw", "assignment"):
             with self.subTest(tamper=tamper), tempfile.TemporaryDirectory() as folder:
                 calls, stopped = [], []
-                core = types.SimpleNamespace(end_sym="</s>")
+                core = DifferentiableHost()
+                core.end_sym = "</s>"
                 def inputs(record, arm):
                     condition = NaturalQACondition(representation=arm)
                     cpu = {"assigned_ids": torch.tensor([[2, 1, 0]])}

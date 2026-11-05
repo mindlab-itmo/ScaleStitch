@@ -181,6 +181,48 @@ def short_answer_target(core, native):
     return ShortAnswerTarget(native, ids, ending)
 
 
+@contextmanager
+def complete_answer_stopping(core):
+    """Remove only the host's premature ``</`` stop during LoRA evaluation."""
+    from copy import copy
+    from transformers import StoppingCriteriaList
+
+    ending = core.end_sym
+    if not isinstance(ending, str) or not ending:
+        raise ValueError("the host must declare its nonempty answer ending")
+    tokens = tuple(_encode(core, ending))
+    if not 1 <= len(tokens) <= 31 or any(type(token) is not int or token < 0 for token in tokens):
+        raise ValueError("the complete host ending must fit the short-answer budget")
+
+    class CompleteEnding:
+        def __call__(self, input_ids, scores, **kwargs):
+            if input_ids.shape[1] < len(tokens):
+                return torch.zeros(input_ids.shape[0], dtype=torch.bool, device=input_ids.device)
+            return (input_ids[:, -len(tokens):] == input_ids.new_tensor(tokens)).all(dim=1)
+
+    model, original = core.llama_model, core.llama_model.generate
+    def generate(*args, **kwargs):
+        criteria = []
+        for criterion in kwargs.get("stopping_criteria") or ():
+            stops = getattr(criterion, "stops", None)
+            if isinstance(stops, (list, tuple)):
+                retained = [stop for stop in stops if not (isinstance(stop, torch.Tensor)
+                    and stop.ndim == 1 and stop.numel() == 1 and stop.item() == 524)]
+                if len(retained) != len(stops):
+                    criterion = copy(criterion)
+                    criterion.stops = retained
+            criteria.append(criterion)
+        kwargs["stopping_criteria"] = StoppingCriteriaList([*criteria, CompleteEnding()])
+        return original(*args, **kwargs)
+    model.generate = generate
+    try:
+        yield dict(protocol="host_stops_without_partial_ending/v2", end_sym=ending, ending_token_ids=list(tokens),
+                   removed_stop_token_sequences=[[524]],
+                   retained_legacy_stop_token_sequences=[[14711], [198, 14711], [82, 29]])
+    finally:
+        model.generate = original
+
+
 class _Captured(Exception):
     pass
 

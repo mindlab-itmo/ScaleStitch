@@ -447,10 +447,16 @@ def _question_identity(qid, scene, question, cpu, condition, prop):
 
 
 def evaluate(core, records, inputs, output, identity, proof, *, stopped=(), run_one=None):
+    with lora.complete_answer_stopping(core) as answer_stopping:
+        return _evaluate(core, records, inputs, output, identity, proof,
+                         stopped=stopped, run_one=run_one, answer_stopping=answer_stopping)
+
+
+def _evaluate(core, records, inputs, output, identity, proof, *, stopped, run_one, answer_stopping):
     run_one = _run_one if run_one is None else run_one
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    manifest = dict(checkpoint=proof, identity=identity, questions=len(records),
+    manifest = dict(checkpoint=proof, identity=identity, questions=len(records), answer_stopping=answer_stopping,
                     conditions=["absent", "lexical"], repetition_penalty=1., maximum_length=2502, max_new_tokens=32)
     path = output / "manifest.json"
     if path.exists():
@@ -512,7 +518,7 @@ def evaluate(core, records, inputs, output, identity, proof, *, stopped=(), run_
             raise ValueError("validation incomplete")
     finally:
         database.close()
-    result = dict(status="complete", checkpoint=proof, protocol_sha256=identity["protocol_hash"],
+    result = dict(status="complete", checkpoint=proof, protocol_sha256=identity["protocol_hash"], answer_stopping=answer_stopping,
                   counts=counts, questions=len(records), predictions_sha256=sha256(output / "predictions.sqlite3"),
                   selection="fixed pilot/epoch; no hyperparameter or test selection")
     _write(terminal, result)
