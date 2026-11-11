@@ -1,8 +1,8 @@
 # ScaleStitch
 
-Inference and evaluation code for **When Size Helps and Hurts: Physical Measurements in 3D Question Answering**.
+Inference, matched LoRA continuation, and evaluation code for **When Size Helps and Hurts: Physical Measurements in 3D Question Answering**.
 
-The pipeline assembles cached object, image, and directed-relation features, runs a frozen 3DGraphLLM under measurement controls, scores answers, and computes paired statistical comparisons.
+The pipeline assembles cached object, image, and directed-relation features, runs measurement controls with a frozen or LoRA-adapted 3DGraphLLM, scores answers, and computes paired statistical comparisons.
 
 The revision examples use repetition penalty `1.0` and host-normalized EM1 for natural questions. The original examples remain available for legacy reproduction.
 

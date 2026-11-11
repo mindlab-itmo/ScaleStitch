@@ -1,6 +1,6 @@
 # ScaleStitch experiments
 
-Frozen 3DGraphLLM experiments for **When Size Helps and Hurts: Physical Measurements in 3D Question Answering**.
+Frozen-host controls and matched LoRA continuation for **When Size Helps and Hurts: Physical Measurements in 3D Question Answering**.
 
 The revision examples specify neutral repetition handling (`1.0`) and host-normalized EM1 for natural questions. Direct comparisons retain strict object-ID scoring.
 
