@@ -492,5 +492,3 @@ def score(output, identity, references):
                 for name, spec in FAMILIES.items()}) for endpoint in endpoints})
     immutable_json(output / "scores.json", report)
     return report
-
-

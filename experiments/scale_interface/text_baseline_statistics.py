@@ -73,4 +73,3 @@ FAMILIES = {
         'assignment_interaction': {'pair_true': 1, 'pair_swapped': -1,
                                    'full_true': -1, 'full_swapped': 1}}),
 }
-
